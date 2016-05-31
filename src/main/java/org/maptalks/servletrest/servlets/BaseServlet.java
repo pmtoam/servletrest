@@ -1,22 +1,15 @@
 package org.maptalks.servletrest.servlets;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.UnsupportedEncodingException;
-import java.io.Writer;
-import java.net.URLDecoder;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
-
 import javax.servlet.ServletException;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.io.Writer;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 可以作为所有servlet的基类，提供了write方法、显示对象转换类和显示对象的获取方法<br/>
@@ -25,20 +18,27 @@ import javax.servlet.http.HttpServletResponse;
  * 若urlpattern中没有定义{return}变量，则默认为json模式 /u/{id}/ /u/10000/
  *
  * @author fuzhen
- *
  */
 public class BaseServlet extends HttpServlet {
 
-	private static String ATTRIBUTE_GZIP = "MAPTALKS-ALLOW-GZIP";
-
 	@Override
 	protected void service(HttpServletRequest req, HttpServletResponse resp)
-			throws ServletException, IOException {
-		final String encoding = req.getHeader("Accept-Encoding");
-		if (encoding != null && encoding.indexOf("gzip") != -1) {
-			req.setAttribute(ATTRIBUTE_GZIP, true);
+		throws ServletException, IOException {
+		String contentEncoding = req.getHeader("Content-Encoding");
+		if (contentEncoding != null && contentEncoding.contains("gzip")) {
+			req = new GzippedRequestWrapper(req);
 		}
+
+		String acceptEncoding = req.getHeader("Accept-Encoding");
+		if (acceptEncoding != null && acceptEncoding.contains("gzip")) {
+			resp = new GzippedResponseWrapper(resp);
+		}
+
 		super.service(req, resp);
+
+		if (resp instanceof GzippedResponseWrapper) {
+			((GzippedResponseWrapper) resp).finish();
+		}
 	}
 
 	/**
@@ -49,61 +49,21 @@ public class BaseServlet extends HttpServlet {
 	 * @throws UnsupportedEncodingException
 	 * @throws IOException
 	 */
-	public Map<String, String> getPostParameters(final HttpServletRequest req)
-			throws IOException {
+	@SuppressWarnings("unchecked")
+	protected Map<String, String> getPostParameters(final HttpServletRequest req)
+		throws IOException {
+		Map params = req.getParameterMap();
 		Map<String, String> postData = new HashMap<String, String>();
-        String contentType = req.getHeader("Content-Encoding");
-        boolean gzipReader = false;
-        if (contentType != null && contentType.indexOf("gzip") > -1) {
-            gzipReader = true;
-        }
-		StringBuilder rawPostDataBuilder = new StringBuilder();
-        BufferedReader br;
-        if (gzipReader) {
-            br = new BufferedReader(new InputStreamReader(new GZIPInputStream(
-                    req.getInputStream()) , "UTF-8"));
-        } else {
-            br = new BufferedReader(new InputStreamReader(
-                    req.getInputStream(), "UTF-8"));
-        }
-
-		String encoding = "UTF-8";
-		int temp;
-		while ((temp = br.read()) != -1) {
-			rawPostDataBuilder.append((char)temp);
-		}
-		br.close();
-		String rawPostData = rawPostDataBuilder.toString();
-		String[] params = rawPostData.split("&");
-		for (int i = 0; i < params.length; i++) {
-			String parameter = params[i];
-			String[] paraValue = parseParameter(parameter, encoding);
-			if (paraValue == null)
-				continue;
-			postData.put(paraValue[0], paraValue[1]);
-		}
-		//解析url中的参数
-		String queryString = req.getQueryString();
-		if (queryString != null) {
-			String[] queryParams = queryString.split("&");
-			for (int i = 0; i < queryParams.length; i++) {
-				String parameter = queryParams[i];
-				String[] paraValue = parseParameter(parameter, encoding);
-				if (paraValue == null)
-					continue;
-				postData.put(paraValue[0], paraValue[1]);
+		for (Object obj : params.entrySet()) {
+			Map.Entry<String, String[]> entry = (Map.Entry<String, String[]>) obj;
+			String[] values = entry.getValue();
+			String value = null;
+			if (values != null && values.length != 0) {
+				value = values[0];
 			}
+			postData.put(entry.getKey(), value);
 		}
 		return postData;
-	}
-
-	private String[] parseParameter(String parameter, String encoding)
-			throws UnsupportedEncodingException {
-		final String[] dataArr = parameter.split("=", 2);
-		if (dataArr == null || dataArr.length != 2)
-			return null;
-		dataArr[1] = URLDecoder.decode(dataArr[1], encoding);
-		return dataArr;
 	}
 
 	/**
@@ -114,7 +74,7 @@ public class BaseServlet extends HttpServlet {
 	 * @throws IOException
 	 */
 	protected void writeResp(String toWrite, final HttpServletRequest req, final HttpServletResponse resp)
-			throws IOException {
+		throws IOException {
 		final Writer writer = getWriter(req, resp);
 		writer.write(toWrite);
 		writer.flush();
@@ -122,16 +82,8 @@ public class BaseServlet extends HttpServlet {
 	}
 
 	protected Writer getWriter(final HttpServletRequest req, final HttpServletResponse resp)
-			throws IOException {
-		if (req.getAttribute(ATTRIBUTE_GZIP) != null) {
-			resp.setHeader("Content-Encoding", "gzip");
-			Writer writer = new OutputStreamWriter(new GZIPOutputStream(
-					resp.getOutputStream()), "UTF-8");
-			return writer;
-		} else {
-			return resp.getWriter();
-		}
-
+		throws IOException {
+		return resp.getWriter();
 	}
 
 	/**
@@ -161,12 +113,11 @@ public class BaseServlet extends HttpServlet {
 	 * @param resp
 	 * @param key
 	 * @param value
-	 * @param _savecookie
-	 *            是否在关闭浏览器后保存该cookie，如果设为true，则expiry会设到cookie中，浏览器关闭后cookie仍会存在
+	 * @param _savecookie 是否在关闭浏览器后保存该cookie，如果设为true，则expiry会设到cookie中，浏览器关闭后cookie仍会存在
 	 * @param expiry
 	 */
 	protected void saveCookie(HttpServletResponse resp, String key,
-			String value, boolean _savecookie, int expiry) {
+							  String value, boolean _savecookie, int expiry) {
 		final Cookie cookie = new Cookie(key, value);
 		if (_savecookie) {
 			cookie.setMaxAge(expiry);
@@ -184,13 +135,12 @@ public class BaseServlet extends HttpServlet {
 	 * @param resp
 	 * @param key
 	 * @param value
-	 * @param _savecookie
-	 *            是否在关闭浏览器后保存该cookie，如果设为true，则expiry会设到cookie中，浏览器关闭后cookie仍会存在
+	 * @param _savecookie 是否在关闭浏览器后保存该cookie，如果设为true，则expiry会设到cookie中，浏览器关闭后cookie仍会存在
 	 * @param expiry
 	 */
 	protected void saveCookie(HttpServletResponse resp, String key,
-			String value, boolean _savecookie, int expiry, String path,
-			String domain) {
+							  String value, boolean _savecookie, int expiry, String path,
+							  String domain) {
 		final Cookie cookie = new Cookie(key, value);
 		if (_savecookie) {
 			cookie.setMaxAge(expiry);

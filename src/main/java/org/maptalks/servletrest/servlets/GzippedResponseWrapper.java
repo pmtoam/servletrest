@@ -3,10 +3,7 @@ package org.maptalks.servletrest.servlets;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpServletResponseWrapper;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
+import java.io.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPOutputStream;
 
@@ -43,6 +40,7 @@ public class GzippedResponseWrapper extends HttpServletResponseWrapper {
 			if (getResponse().isCommitted()) {
 				return getResponse().getOutputStream();
 			}
+			gzippedStream = newGzippedStream(getResponse().getOutputStream());
 		} else if (writer != null) {
 			throw new IllegalStateException("getWriter() called");
 		}
@@ -58,15 +56,22 @@ public class GzippedResponseWrapper extends HttpServletResponseWrapper {
 			if (getResponse().isCommitted()) {
 				return getResponse().getWriter();
 			}
-			gzippedStream = new GzippedOutputStream(getResponse().getOutputStream());
-			String encoding = getCharacterEncoding();
-			if (encoding == null) {
-				writer = new PrintWriter(gzippedStream);
-			} else {
-				writer = new PrintWriter(new OutputStreamWriter(gzippedStream, encoding));
-			}
+			gzippedStream = newGzippedStream(getResponse().getOutputStream());
+			writer = newWriter(gzippedStream, getCharacterEncoding());
 		}
 		return writer;
+	}
+
+	private GzippedOutputStream newGzippedStream(OutputStream out) throws IOException {
+		return new GzippedOutputStream(out);
+	}
+
+	private PrintWriter newWriter(OutputStream out, String encoding) throws UnsupportedEncodingException {
+		if (encoding == null) {
+			return new PrintWriter(out);
+		} else {
+			return new PrintWriter(new OutputStreamWriter(out, encoding));
+		}
 	}
 
 	@Override
